@@ -81,7 +81,8 @@ PAG_HEIGHT_FIELD = "hmax"       # maximum height in metres (may be null)
 PAG_CODE_FIELD   = "cod_zone"   # short zone code e.g. HAB_1, MIX_U
 
 # ── AI settings ──────────────────────────────────────────────────────────────
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL    = "paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 CHROMA_PATH     = str(SILVER / "chroma_db")
 CHROMA_COLLECTION = "lu_regulations"
 TOP_K_CHUNKS    = 4   # regulation snippets retrieved per building

@@ -41,35 +41,69 @@ class _AnthropicClient(_LLMClient):
 
 class _GeminiClient(_LLMClient):
     def __init__(self, api_key: str, model: str):
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=RISK_BRIEF_SYSTEM,
-        )
+        from google import genai
+        self._client = genai.Client(api_key=api_key)
+        self._model  = model
 
     def generate(self, user_content: str) -> str:
-        resp = self._model.generate_content(user_content)
+        from google.genai import types
+        resp = self._client.models.generate_content(
+            model=self._model,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=RISK_BRIEF_SYSTEM,
+                max_output_tokens=600,
+                temperature=0.3,
+            ),
+        )
         return resp.text.strip()
 
 
+class _GroqClient(_LLMClient):
+    def __init__(self, api_key: str, model: str):
+        from groq import Groq
+        self._client = Groq(api_key=api_key)
+        self._model  = model
+
+    def generate(self, user_content: str) -> str:
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": RISK_BRIEF_SYSTEM},
+                {"role": "user",   "content": user_content},
+            ],
+            max_tokens=600,
+            temperature=0.3,
+        )
+        return resp.choices[0].message.content.strip()
+
+
 def get_llm_client() -> _LLMClient:
-    """Return the appropriate LLM client based on available API keys."""
+    """Return the appropriate LLM client based on available API keys.
+
+    Priority: Anthropic → Groq → Google Gemini.
+    """
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    groq_key      = os.environ.get("GROQ_API_KEY", "")
     google_key    = os.environ.get("GOOGLE_API_KEY", "")
 
     if anthropic_key and not anthropic_key.startswith("sk-ant-..."):
         model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
         return _AnthropicClient(api_key=anthropic_key, model=model)
 
+    if groq_key and not groq_key.startswith("gsk_..."):
+        model = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+        return _GroqClient(api_key=groq_key, model=model)
+
     if google_key and not google_key.startswith("AIza..."):
-        model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+        model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
         return _GeminiClient(api_key=google_key, model=model)
 
     raise EnvironmentError(
-        "No LLM API key found. Set either:\n"
-        "  ANTHROPIC_API_KEY  (get one at https://console.anthropic.com)\n"
-        "  GOOGLE_API_KEY     (free tier at https://aistudio.google.com/apikey)\n"
+        "No LLM API key found. Set one of:\n"
+        "  GROQ_API_KEY       (free at https://console.groq.com)\n"
+        "  ANTHROPIC_API_KEY  (https://console.anthropic.com)\n"
+        "  GOOGLE_API_KEY     (https://aistudio.google.com/apikey)\n"
         "in your .env file."
     )
 
@@ -117,10 +151,10 @@ def load_retriever():
 
 def _build_rag_query(row: dict) -> str:
     parts = ["building inspection risk Luxembourg"]
-    zone = row.get("zone_code", "")
+    zone = row.get("zone_code") or ""
     if zone:
         parts.append(f"zone {zone}")
-    era = row.get("osm_era", "")
+    era = row.get("osm_era") or ""
     if "pre-1945" in era or "1945" in era:
         parts.append("old building asbestos insulation heritage electrical")
     elif "1970" in era or "1989" in era:
@@ -162,10 +196,14 @@ def _build_facts_string(row: dict) -> str:
     else:
         lines.append("Construction era: unknown (no OSM data)")
     levels = row.get("osm_levels")
-    if levels:
-        lines.append(f"Number of storeys (OSM): {levels}")
+    try:
+        levels_int = int(float(levels)) if levels and str(levels) != "nan" else None
+    except (TypeError, ValueError):
+        levels_int = None
+    if levels_int:
+        lines.append(f"Number of storeys (OSM): {levels_int}")
     btype = row.get("osm_building_type")
-    if btype and str(btype) not in ("yes", "None", "nan"):
+    if btype and str(btype) not in ("yes", "None", "nan", ""):
         lines.append(f"Building type (OSM): {btype}")
     return "\n".join(lines)
 

@@ -36,8 +36,9 @@ chroma_db/
 Thumbs.db
 
 # IDE
-.vscode/settings.json
 .idea/
+# Keep workspace settings (interpreter path, env file) but not personal IDE prefs
+# .vscode/settings.json is committed intentionally
 
 # Streamlit
 .streamlit/secrets.toml

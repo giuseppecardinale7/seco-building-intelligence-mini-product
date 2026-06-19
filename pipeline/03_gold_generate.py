@@ -47,10 +47,15 @@ def main(sample: int | None = 200, delay: float = 0.3) -> None:
     gdf = gpd.read_file(str(SILVER_BUILDINGS))
     print(f"[gold] Loaded {len(gdf)} silver buildings")
 
-    # Resume support
+    # Resume support — only skip buildings that already have a real brief
     if GOLD_BUILDINGS.exists():
         gold_gdf = gpd.read_file(str(GOLD_BUILDINGS))
-        already_done = set(gold_gdf["building_id"].astype(str))
+        has_brief = (
+            gold_gdf["risk_brief"].notna() & (gold_gdf["risk_brief"] != "")
+            if "risk_brief" in gold_gdf.columns
+            else pd.Series(False, index=gold_gdf.index)
+        )
+        already_done = set(gold_gdf.loc[has_brief, "building_id"].astype(str))
         print(f"[gold] Resuming — {len(already_done)} briefs already generated")
     else:
         gold_gdf = None
