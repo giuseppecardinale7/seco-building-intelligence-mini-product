@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+
+# Data (large files — reproduce by running the pipeline)
+data/bronze/
+data/silver/
+data/gold/
+
+# Except small committed reference files
+!data/gold/.gitkeep
+!data/silver/.gitkeep
+!data/bronze/.gitkeep
+
+# ChromaDB
+chroma_db/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
