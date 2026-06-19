@@ -8,6 +8,7 @@ On-demand brief generation for buildings not yet pre-processed.
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -113,86 +114,114 @@ def _format_risk_brief(text: str) -> None:
 
 # ── Map ───────────────────────────────────────────────────────────────────────
 
-def build_map(gdf: gpd.GeoDataFrame, selected_id: str | None) -> "folium.Map":
-    import folium
-    from folium.plugins import MarkerCluster
+def _zone_color(zone_code: str | None) -> str:
+    """Map PAG zone code to a display colour."""
+    if not zone_code or str(zone_code) in ("None", "nan", ""):
+        return "#95a5a6"   # grey — no zone data
+    z = str(zone_code).upper()
+    if z.startswith("HAB"):
+        return "#3498db"   # blue — residential
+    if z.startswith("MIX") or z.startswith("CEN"):
+        return "#9b59b6"   # purple — mixed / town centre
+    if z.startswith("ECO") or z.startswith("IND"):
+        return "#e67e22"   # orange — economic / industrial
+    if z.startswith("AGR"):
+        return "#27ae60"   # green — agricultural
+    if z.startswith("VER") or z.startswith("VERT") or z.startswith("ESP"):
+        return "#2ecc71"   # light green — green space
+    return "#95a5a6"       # grey — other
 
-    center = gdf.geometry.centroid.to_crs("EPSG:4326")
-    lat_c = float(center.y.mean())
-    lon_c = float(center.x.mean())
+
+LEGEND_HTML = """
+<div style="position:fixed;bottom:30px;left:30px;z-index:1000;
+            background:white;padding:10px;border-radius:8px;
+            border:1px solid #ccc;font-size:12px;">
+<b>PAG zone</b><br>
+<span style="color:#3498db">■</span> Residential (HAB)<br>
+<span style="color:#9b59b6">■</span> Mixed / Centre (MIX, CEN)<br>
+<span style="color:#e67e22">■</span> Economic / Industrial (ECO, IND)<br>
+<span style="color:#27ae60">■</span> Agricultural (AGR)<br>
+<span style="color:#2ecc71">■</span> Green space (VER)<br>
+<span style="color:#95a5a6">■</span> Other / unknown
+</div>"""
+
+
+def build_map(gdf: gpd.GeoDataFrame, selected_id: str | None) -> "folium.Map":
+    """Render map with individual CircleMarkers for a 2000-building sample.
+
+    The full 9 K polygon GeoJSON (~10 MB) crashes Leaflet.  GeoJson with
+    marker= template also fails to render (fill=False default, style_function
+    not overriding it reliably).  Individual folium.CircleMarker objects are
+    verbose but guaranteed to render.  We cap at 2000 markers; the selected
+    building is always included and drawn with its full polygon too.
+    """
+    import folium
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        centroids = gdf.geometry.centroid
+
+    lat_c = float(centroids.y.mean())
+    lon_c = float(centroids.x.mean())
 
     m = folium.Map(location=[lat_c, lon_c], zoom_start=14,
                    tiles="CartoDB positron")
 
-    # Colour by era
-    era_colors = {
-        "pre-1945": "#e74c3c",
-        "1945–1969": "#e67e22",
-        "1970–1989": "#f1c40f",
-        "1990–2009": "#2ecc71",
-        "2010+": "#3498db",
-        "unknown": "#95a5a6",
-    }
+    # ── Sample buildings to display (cap at 2000 for browser perf) ───────────
+    MAX_DOTS = 2000
+    has_brief = gdf["risk_brief"].notna() if "risk_brief" in gdf.columns else pd.Series(False, index=gdf.index)
+    priority = gdf[has_brief]
+    remainder = gdf[~has_brief]
+    n_rest = max(0, MAX_DOTS - len(priority))
+    display = pd.concat([
+        priority,
+        remainder.sample(min(n_rest, len(remainder)), random_state=42),
+    ])
 
-    def _style(feature):
-        era = feature["properties"].get("osm_era", "unknown") or "unknown"
-        color = era_colors.get(era, "#95a5a6")
-        bid = feature["properties"].get("building_id", "")
-        is_selected = bid == selected_id
-        return {
-            "fillColor": color,
-            "color": "#2c3e50" if is_selected else "#7f8c8d",
-            "weight": 3 if is_selected else 0.5,
-            "fillOpacity": 0.85 if is_selected else 0.6,
-        }
+    # ── Draw circle markers ───────────────────────────────────────────────────
+    for idx, row in display.iterrows():
+        bid  = str(row["building_id"])
+        is_sel = bid == selected_id
+        color = "#f39c12" if is_sel else _zone_color(row.get("zone_code"))
+        zone  = row.get("zone_code") or "—"
+        area  = row.get("footprint_area_m2")
+        area_str = f"{area:.0f} m²" if pd.notna(area) else "—"
 
-    def _popup(feature):
-        p = feature["properties"]
-        bid = p.get("building_id", "?")
-        area = p.get("footprint_area_m2")
-        area_str = f"{area:.0f} m²" if area else "—"
-        zone = p.get("zone_code") or "—"
-        era  = p.get("osm_era") or "unknown"
-        has_brief = bool(p.get("risk_brief", ""))
-        brief_icon = "✅" if has_brief else "⏳"
-        return folium.Popup(
-            f"<b>{bid}</b><br>"
-            f"Area: {area_str}<br>"
-            f"Zone: {zone}<br>"
-            f"Era: {era}<br>"
-            f"Brief: {brief_icon}",
-            max_width=200,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pt = centroids[idx]
 
-    folium.GeoJson(
-        gdf.__geo_interface__,
-        style_function=_style,
-        tooltip=folium.GeoJsonTooltip(
-            fields=["building_id", "footprint_area_m2", "zone_code", "osm_era"],
-            aliases=["ID", "Area (m²)", "PAG zone", "Era"],
-            localize=True,
-        ),
-        popup=folium.GeoJsonPopup(
-            fields=["building_id", "zone_code", "osm_era"],
-            aliases=["ID", "Zone", "Era"],
-        ),
-    ).add_to(m)
+        folium.CircleMarker(
+            location=[pt.y, pt.x],
+            radius=6 if is_sel else 4,
+            fill=True,
+            fill_color=color,
+            color="#2c3e50" if is_sel else "#ffffff",
+            weight=2 if is_sel else 0.5,
+            fill_opacity=1.0 if is_sel else 0.75,
+            tooltip=f"ID: {bid}<br>Zone: {zone}<br>Area: {area_str}",
+        ).add_to(m)
 
-    # Legend
-    legend_html = """
-    <div style="position:fixed;bottom:30px;left:30px;z-index:1000;
-                background:white;padding:10px;border-radius:8px;
-                border:1px solid #ccc;font-size:12px;">
-    <b>Construction era</b><br>
-    <span style="color:#e74c3c">■</span> Pre-1945<br>
-    <span style="color:#e67e22">■</span> 1945–1969<br>
-    <span style="color:#f1c40f">■</span> 1970–1989<br>
-    <span style="color:#2ecc71">■</span> 1990–2009<br>
-    <span style="color:#3498db">■</span> 2010+<br>
-    <span style="color:#95a5a6">■</span> Unknown
-    </div>"""
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # ── Selected building: full polygon ───────────────────────────────────────
+    if selected_id:
+        sel = gdf[gdf["building_id"].astype(str) == selected_id]
+        if len(sel) > 0:
+            folium.GeoJson(
+                sel[["building_id", "geometry"]].__geo_interface__,
+                style_function=lambda _: {
+                    "fillColor": "#f39c12",
+                    "color":     "#2c3e50",
+                    "weight":    3,
+                    "fillOpacity": 0.45,
+                },
+            ).add_to(m)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                pt = sel.geometry.centroid.iloc[0]
+            m.location = [pt.y, pt.x]
 
+    m.get_root().html.add_child(folium.Element(LEGEND_HTML))
     return m
 
 
@@ -219,8 +248,11 @@ def main() -> None:
 
         st.caption(f"{len(gdf)} buildings loaded · {GOLD_FILE.exists() and 'Gold' or 'Silver'} layer")
 
-        # Search by building ID or zone
-        search = st.text_input("Search by building ID or PAG zone code")
+        # Search — driven by map clicks via session state (key binds widget ↔ state)
+        search = st.text_input(
+            "Search by building ID or PAG zone code",
+            key="search_input",
+        )
         if search:
             mask = (
                 gdf["building_id"].astype(str).str.contains(search, case=False, na=False)
@@ -245,8 +277,8 @@ def main() -> None:
             )
 
         st.divider()
-        st.markdown("**Legend**")
-        st.markdown("🔴 Pre-1945 · 🟠 1945–69 · 🟡 1970–89 · 🟢 1990–09 · 🔵 2010+")
+        st.markdown("**Map colour = PAG zone**")
+        st.markdown("🔵 HAB · 🟣 MIX/CEN · 🟠 ECO/IND · 🟢 AGR · 🟡 VER")
 
         st.divider()
         st.markdown(
@@ -266,27 +298,24 @@ def main() -> None:
         m = build_map(gdf, selected_bid)
         map_data = st_folium(m, height=520, use_container_width=True)
 
-        # Allow click-on-map to update selection
-        clicked_id = None
+        # Map click → populate search bar via session state + rerun.
+        # The tooltip from folium is HTML so we extract the BLD_ ID with regex.
         if map_data and map_data.get("last_object_clicked_tooltip"):
-            tooltip_text = map_data["last_object_clicked_tooltip"]
-            if "ID" in str(tooltip_text):
-                # tooltip shows "ID\nBLD_000042\n..."
-                lines = str(tooltip_text).split("\n")
-                for j, ln in enumerate(lines):
-                    if "ID" in ln and j + 1 < len(lines):
-                        clicked_id = lines[j + 1].strip()
-                        break
+            match = re.search(r"BLD_\d+",
+                              str(map_data["last_object_clicked_tooltip"]))
+            if match:
+                clicked_id = match.group(0)
+                if clicked_id != st.session_state.get("search_input", ""):
+                    st.session_state["search_input"] = clicked_id
+                    st.rerun()
 
     with col_card:
-        if selected_bid or clicked_id:
-            bid = clicked_id or selected_bid
-            row = gdf[gdf["building_id"].astype(str) == bid]
+        if selected_bid:
+            row = gdf[gdf["building_id"].astype(str) == selected_bid]
             if len(row) == 0:
-                st.warning(f"Building {bid} not found.")
+                st.warning(f"Building {selected_bid} not found.")
             else:
-                row_dict = row.iloc[0].to_dict()
-                _render_building_card(row_dict, gdf)
+                _render_building_card(row.iloc[0].to_dict(), gdf)
         else:
             st.info("Select a building in the sidebar or click one on the map.")
 

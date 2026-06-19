@@ -121,6 +121,8 @@ def _checkpoint(new_rows: list[dict], gold_gdf, crs) -> None:
         combined = gpd.GeoDataFrame(
             pd.concat([gold_gdf, new_gdf], ignore_index=True), crs=crs
         )
+        # Upsert: keep latest row per building (new rows override the old seed)
+        combined = combined.drop_duplicates(subset=["building_id"], keep="last")
     else:
         combined = new_gdf
     combined.to_file(str(GOLD_BUILDINGS), driver="GeoJSON")
