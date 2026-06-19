@@ -53,36 +53,23 @@ out skel qt;
 # ── Regulation sources (for RAG corpus) ──────────────────────────────────────
 REGULATION_SOURCES = [
     {
-        "id": "guichet_permis_construire",
-        "url": "https://guichet.public.lu/fr/entreprises/construction/permis-construire/conditions-autorisation.html",
-        "label": "Guichet.lu — Conditions d'autorisation de construire",
-        "domain": "building_permit",
+        "id": "itm_construction_sante",
+        "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+        "label": "ITM — Construction: sécurité et santé au travail",
+        "domain": "structural_safety",
     },
     {
-        "id": "guichet_energie_batiment",
-        "url": "https://guichet.public.lu/fr/citoyens/logement-urbanisme/construction/performance-energetique.html",
-        "label": "Guichet.lu — Performance énergétique des bâtiments",
-        "domain": "energy",
-    },
-    {
-        "id": "itm_prevention_incendie",
-        "url": "https://itm.public.lu/fr/securite-au-travail/risques-lies-au-batiment/prevention-incendie.html",
-        "label": "ITM — Prévention incendie dans les bâtiments",
-        "domain": "fire_safety",
-    },
-    {
-        "id": "legilux_rg_energie",
-        "url": "https://legilux.public.lu/eli/etat/leg/rgd/2016/11/23/a234/jo",
-        "label": "Legilux — RGD 23 nov. 2016 performance énergétique",
-        "domain": "energy",
-    },
-    {
-        "id": "itm_hauteur_securite",
-        "url": "https://itm.public.lu/fr/securite-au-travail/risques-lies-au-batiment.html",
-        "label": "ITM — Sécurité dans les bâtiments (général)",
+        "id": "itm_chantiers",
+        "url": "https://itm.public.lu/fr/securite-sante-travail/chantiers-temporaires-mobiles.html",
+        "label": "ITM — Chantiers temporaires et mobiles",
         "domain": "structural_safety",
     },
 ]
+
+# Static regulation corpus (curated excerpts from public LU legislation).
+# Used as primary RAG content — always available, no scraping needed.
+# Sources: RGD 2016/11/23, RGD 2011/08/10, PAG general provisions, ITM circulars.
+STATIC_REGULATION_CORPUS_FILE = ROOT / "pipeline" / "regulations_static.json"
 
 # ── Silver / Gold field names ─────────────────────────────────────────────────
 EPSG_SOURCE = "EPSG:2169"   # LUREF / Luxembourg Transverse Mercator

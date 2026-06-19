@@ -28,6 +28,7 @@ from config import (
     EPSG_SOURCE, EPSG_TARGET,
     PAG_ZONE_FIELD, PAG_HEIGHT_FIELD, PAG_CODE_FIELD,
     EMBEDDING_MODEL, CHROMA_PATH, CHROMA_COLLECTION,
+    STATIC_REGULATION_CORPUS_FILE,
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -421,26 +422,22 @@ def _chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> list[str
 
 
 def embed_regulations() -> int:
+    """Embed regulations into ChromaDB.
+
+    Strategy (in order):
+    1. Static corpus (regulations_static.json) — always present, curated excerpts
+       from public Luxembourg legislation. This is the primary RAG source.
+    2. Scraped HTML pages from regulation websites — supplementary, if available.
+    """
     print("[silver] Embedding regulation text → ChromaDB")
 
     import chromadb
     from sentence_transformers import SentenceTransformer
 
-    manifest_file = BRONZE / "regulations_manifest.json"
-    if not manifest_file.exists():
-        print("         [warn] No regulation manifest — skipping embedding")
-        return 0
-
-    manifest = json.loads(manifest_file.read_text())
-    if not manifest:
-        print("         [warn] Manifest empty — skipping embedding")
-        return 0
-
     print(f"         Loading embedding model: {EMBEDDING_MODEL}")
     model = SentenceTransformer(EMBEDDING_MODEL)
 
     client = chromadb.PersistentClient(path=CHROMA_PATH)
-    # Reset collection so re-runs are idempotent
     try:
         client.delete_collection(CHROMA_COLLECTION)
     except Exception:
@@ -451,26 +448,55 @@ def embed_regulations() -> int:
     )
 
     total_chunks = 0
-    for src in manifest:
-        html_path = Path(src.get("path", ""))
-        if not html_path.exists():
-            continue
-        text = _extract_text_from_html(html_path.read_bytes())
-        chunks = _chunk_text(text)
-        if not chunks:
-            continue
 
-        embeddings = model.encode(chunks, show_progress_bar=False).tolist()
-        ids = [f"{src['id']}_{i}" for i in range(len(chunks))]
-        metadatas = [
-            {"source_id": src["id"], "label": src["label"],
-             "url": src["url"], "domain": src.get("domain", "")}
-            for _ in chunks
-        ]
-        collection.add(documents=chunks, embeddings=embeddings,
-                       ids=ids, metadatas=metadatas)
-        total_chunks += len(chunks)
-        print(f"         {src['id']}: {len(chunks)} chunks embedded")
+    # ── 1. Static corpus (primary) ────────────────────────────────────────────
+    if STATIC_REGULATION_CORPUS_FILE.exists():
+        static_docs = json.loads(STATIC_REGULATION_CORPUS_FILE.read_text())
+        print(f"         Static corpus: {len(static_docs)} documents")
+        for doc in static_docs:
+            chunks = _chunk_text(doc["text"])
+            if not chunks:
+                chunks = [doc["text"]]
+            embeddings = model.encode(chunks, show_progress_bar=False).tolist()
+            ids = [f"{doc['id']}_s{i}" for i in range(len(chunks))]
+            metadatas = [
+                {"source_id": doc["id"], "label": doc["label"],
+                 "url": doc.get("url", ""), "domain": doc.get("domain", "")}
+                for _ in chunks
+            ]
+            collection.add(documents=chunks, embeddings=embeddings,
+                           ids=ids, metadatas=metadatas)
+            total_chunks += len(chunks)
+        print(f"         Static corpus embedded: {total_chunks} chunks")
+    else:
+        print("         [warn] Static corpus not found")
+
+    # ── 2. Scraped HTML (supplementary) ──────────────────────────────────────
+    manifest_file = BRONZE / "regulations_manifest.json"
+    if manifest_file.exists():
+        manifest = json.loads(manifest_file.read_text())
+        html_chunks = 0
+        for src in manifest:
+            html_path = Path(src.get("path", ""))
+            if not html_path.exists():
+                continue
+            text = _extract_text_from_html(html_path.read_bytes())
+            chunks = _chunk_text(text)
+            if not chunks:
+                continue
+            embeddings = model.encode(chunks, show_progress_bar=False).tolist()
+            ids = [f"{src['id']}_h{i}" for i in range(len(chunks))]
+            metadatas = [
+                {"source_id": src["id"], "label": src["label"],
+                 "url": src["url"], "domain": src.get("domain", "")}
+                for _ in chunks
+            ]
+            collection.add(documents=chunks, embeddings=embeddings,
+                           ids=ids, metadatas=metadatas)
+            total_chunks += len(chunks)
+            html_chunks += len(chunks)
+        if html_chunks > 0:
+            print(f"         Scraped HTML embedded: {html_chunks} additional chunks")
 
     print(f"         Total chunks in ChromaDB: {total_chunks}")
     return total_chunks

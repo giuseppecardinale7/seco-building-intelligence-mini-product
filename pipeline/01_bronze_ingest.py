@@ -120,16 +120,30 @@ def ingest_osm(prov: dict) -> None:
         return
 
     print(f"  [fetch] Overpass QL query (bbox Esch-sur-Alzette)")
-    resp = requests.post(OVERPASS_URL,
-                         data={"data": OVERPASS_QUERY},
-                         timeout=120,
-                         headers={"User-Agent": "SECO-BuildingIntelligence/1.0"})
-    resp.raise_for_status()
+    headers = {"User-Agent": "SECO-BuildingIntelligence/1.0"}
 
-    dest.write_bytes(resp.content)
-    size = dest.stat().st_size
-    _record(prov, key, dest, OVERPASS_URL, size)
-    print(f"  [ok]   saved {size/1e6:.1f} MB → {dest.name}")
+    # Try primary endpoint with up to 3 retries; fall back to alternative mirror
+    endpoints = [
+        OVERPASS_URL,
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    for attempt, url in enumerate(endpoints * 2, 1):
+        try:
+            time.sleep(2 * (attempt - 1))   # back-off: 0s, 2s, 4s, 6s
+            resp = requests.post(url,
+                                 data={"data": OVERPASS_QUERY},
+                                 timeout=120,
+                                 headers=headers)
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            size = dest.stat().st_size
+            _record(prov, key, dest, url, size)
+            print(f"  [ok]   saved {size/1e6:.1f} MB → {dest.name}")
+            return
+        except requests.RequestException as exc:
+            print(f"  [warn] Overpass attempt {attempt} failed: {exc}")
+
+    print("  [warn] All Overpass attempts failed — OSM era data will be unavailable")
 
 
 # ── 3. Regulation HTML (for RAG corpus) ─────────────────────────────────────
