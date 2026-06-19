@@ -221,7 +221,6 @@ def build_map(gdf: gpd.GeoDataFrame, selected_id: str | None) -> "folium.Map":
                 pt = sel.geometry.centroid.iloc[0]
             m.location = [pt.y, pt.x]
 
-    m.get_root().html.add_child(folium.Element(LEGEND_HTML))
     return m
 
 
@@ -277,8 +276,15 @@ def main() -> None:
             )
 
         st.divider()
-        st.markdown("**Map colour = PAG zone**")
-        st.markdown("🔵 HAB · 🟣 MIX/CEN · 🟠 ECO/IND · 🟢 AGR · 🟡 VER")
+
+        st.divider()
+        st.markdown("**Map colour — PAG zone**")
+        st.markdown("🔵 Residential (HAB)")
+        st.markdown("🟣 Mixed / Town centre (MIX, CEN)")
+        st.markdown("🟠 Economic / Industrial (ECO, IND)")
+        st.markdown("🟢 Agricultural (AGR)")
+        st.markdown("🟡 Green space (VER)")
+        st.markdown("⚫ Other / no zone")
 
         st.divider()
         st.markdown(
@@ -297,6 +303,7 @@ def main() -> None:
         from streamlit_folium import st_folium
         m = build_map(gdf, selected_bid)
         map_data = st_folium(m, height=520, use_container_width=True)
+
 
         # Map click → populate search bar via session state + rerun.
         # The tooltip from folium is HTML so we extract the BLD_ ID with regex.
