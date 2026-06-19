@@ -1,423 +1,278 @@
 """
-SECO Building Intelligence — Streamlit UI
+SECO Building Intelligence — pre-inspection triage tool
+Pilot area: Esch-sur-Alzette, Luxembourg
 
-Shows building footprints for Esch-sur-Alzette on an interactive map.
-Click a building → see the structured fact card + AI pre-inspection risk brief.
-On-demand brief generation for buildings not yet pre-processed.
+Flow:
+  1. User picks a building (map click or sidebar search).
+  2. App shows what we know: PAG zone, floor area.
+  3. User clicks "Generate brief" → building facts + regulation excerpts
+     are sent to an LLM, which returns a plain-English risk brief.
+
+Data sources:
+  - Building footprints: BD-L-GeoBase (Administration du Cadastre et de la Topographie, 2026)
+  - Zoning: national PAG GeoPackage (data.public.lu, June 2026)
+  - Regulations: curated excerpts in regulations.json
 """
 
 import json
 import os
 import re
-import sys
+import warnings
 from pathlib import Path
 
+import folium
 import geopandas as gpd
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from groq import Groq
+from streamlit_folium import st_folium
 
+warnings.filterwarnings("ignore", message=".*CRS.*")
 load_dotenv()
 
-# Add pipeline to path so we can import config + generation helpers
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+# ── Paths ──────────────────────────────────────────────────────────────────────
+ROOT             = Path(__file__).resolve().parent.parent
+REGULATIONS_FILE = ROOT / "regulations.json"
 
-from config import (
-    GOLD, SILVER,
-    EMBEDDING_MODEL, CHROMA_PATH, CHROMA_COLLECTION, TOP_K_CHUNKS,
-)
+# Support both the simplified pipeline output and the original silver path
+_candidates = [
+    ROOT / "data" / "buildings_esch.geojson",
+    ROOT / "data" / "silver" / "buildings_esch.geojson",
+]
+BUILDINGS_FILE = next(p for p in _candidates if p.exists())
 
-GOLD_FILE   = GOLD / "buildings_esch_gold.geojson"
-SILVER_FILE = SILVER / "buildings_esch.geojson"
+# ── Map colour by PAG zone prefix ─────────────────────────────────────────────
+ZONE_COLORS = {
+    "HAB": "#3498db",   # residential   → blue
+    "MIX": "#9b59b6",   # mixed use     → purple
+    "CEN": "#9b59b6",   # town centre   → purple
+    "ECO": "#e67e22",   # economic      → orange
+    "IND": "#e67e22",   # industrial    → orange
+    "AGR": "#27ae60",   # agricultural  → green
+    "VER": "#2ecc71",   # green space   → light green
+}
 
+# ── LLM system prompt ──────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are a pre-inspection assistant for SECO Group, an independent
+building inspection company in Luxembourg.
 
-# ── Page config ───────────────────────────────────────────────────────────────
-
-st.set_page_config(
-    page_title="SECO Building Intelligence",
-    page_icon="🏗️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-
-# ── Load data ─────────────────────────────────────────────────────────────────
-
-@st.cache_data(ttl=300)
-def load_buildings() -> gpd.GeoDataFrame | None:
-    for path in (GOLD_FILE, SILVER_FILE):
-        if path.exists():
-            gdf = gpd.read_file(str(path))
-            return gdf
-    return None
-
-
-@st.cache_resource
-def load_retriever():
-    try:
-        import chromadb
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(EMBEDDING_MODEL)
-        client = chromadb.PersistentClient(path=CHROMA_PATH)
-        collection = client.get_collection(CHROMA_COLLECTION)
-        return model, collection
-    except Exception:
-        return None, None
+Given the known facts about a building and a set of regulation excerpts, write a
+concise PRE-INSPECTION RISK BRIEF with numbered risk flags (HIGH / MEDIUM / LOW).
+For each flag, cite the regulation in [brackets] and explain why that specific
+building characteristic triggers it.
+End with one sentence: Overall Assessment.
+Write in English. Be specific — don't flag risks that aren't supported by the facts."""
 
 
-# ── UI helpers ────────────────────────────────────────────────────────────────
+# ── Data loading (cached so the file is only read once) ───────────────────────
 
-def _era_badge(era: str | None) -> str:
-    if not era or era == "unknown":
-        return "⚪ Unknown era"
-    if "pre-1945" in era:
-        return "🔴 Pre-1945"
-    if "1945" in era:
-        return "🟠 1945–1969"
-    if "1970" in era:
-        return "🟡 1970–1989"
-    if "1990" in era:
-        return "🟢 1990–2009"
-    return "🔵 2010+"
+@st.cache_data
+def load_buildings() -> gpd.GeoDataFrame:
+    return gpd.read_file(str(BUILDINGS_FILE))
+
+@st.cache_data
+def load_regulations() -> list[dict]:
+    with open(REGULATIONS_FILE) as f:
+        return json.load(f)
 
 
-def _zone_badge(code: str | None) -> str:
-    if not code:
-        return "⚪ No PAG zone"
-    if "HAB" in str(code):
-        return f"🏠 {code}"
-    if "MIX" in str(code) or "CEN" in str(code):
-        return f"🏪 {code}"
-    if "IND" in str(code) or "ECO" in str(code):
-        return f"🏭 {code}"
-    if "VER" in str(code) or "VERT" in str(code):
-        return f"🌿 {code}"
-    return f"📋 {code}"
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def zone_color(zone_code) -> str:
+    """Return a hex colour for a PAG zone code (e.g. 'HAB_1' → blue)."""
+    if not zone_code or str(zone_code) in ("None", "nan"):
+        return "#95a5a6"
+    return ZONE_COLORS.get(str(zone_code)[:3].upper(), "#95a5a6")
 
 
-def _format_risk_brief(text: str) -> None:
-    """Render risk brief with colour-coded priority labels."""
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            st.write("")
-            continue
-        if "HIGH" in stripped.upper():
-            st.markdown(f"🔴 {stripped}")
-        elif "MEDIUM" in stripped.upper():
-            st.markdown(f"🟡 {stripped}")
-        elif "LOW" in stripped.upper():
-            st.markdown(f"🟢 {stripped}")
-        else:
-            st.markdown(stripped)
-
-
-# ── Map ───────────────────────────────────────────────────────────────────────
-
-def _zone_color(zone_code: str | None) -> str:
-    """Map PAG zone code to a display colour."""
-    if not zone_code or str(zone_code) in ("None", "nan", ""):
-        return "#95a5a6"   # grey — no zone data
-    z = str(zone_code).upper()
-    if z.startswith("HAB"):
-        return "#3498db"   # blue — residential
-    if z.startswith("MIX") or z.startswith("CEN"):
-        return "#9b59b6"   # purple — mixed / town centre
-    if z.startswith("ECO") or z.startswith("IND"):
-        return "#e67e22"   # orange — economic / industrial
-    if z.startswith("AGR"):
-        return "#27ae60"   # green — agricultural
-    if z.startswith("VER") or z.startswith("VERT") or z.startswith("ESP"):
-        return "#2ecc71"   # light green — green space
-    return "#95a5a6"       # grey — other
-
-
-LEGEND_HTML = """
-<div style="position:fixed;bottom:30px;left:30px;z-index:1000;
-            background:white;padding:10px;border-radius:8px;
-            border:1px solid #ccc;font-size:12px;">
-<b>PAG zone</b><br>
-<span style="color:#3498db">■</span> Residential (HAB)<br>
-<span style="color:#9b59b6">■</span> Mixed / Centre (MIX, CEN)<br>
-<span style="color:#e67e22">■</span> Economic / Industrial (ECO, IND)<br>
-<span style="color:#27ae60">■</span> Agricultural (AGR)<br>
-<span style="color:#2ecc71">■</span> Green space (VER)<br>
-<span style="color:#95a5a6">■</span> Other / unknown
-</div>"""
-
-
-def build_map(gdf: gpd.GeoDataFrame, selected_id: str | None) -> "folium.Map":
-    """Render map with individual CircleMarkers for a 2000-building sample.
-
-    The full 9 K polygon GeoJSON (~10 MB) crashes Leaflet.  GeoJson with
-    marker= template also fails to render (fill=False default, style_function
-    not overriding it reliably).  Individual folium.CircleMarker objects are
-    verbose but guaranteed to render.  We cap at 2000 markers; the selected
-    building is always included and drawn with its full polygon too.
+def build_map(buildings: gpd.GeoDataFrame, selected_id: str | None) -> folium.Map:
     """
-    import folium
-    import warnings
+    Draw a coloured dot for each building (sample of 2000 for browser speed).
+    The selected building gets an orange dot + its full polygon outline.
+    """
+    m = folium.Map(location=[49.495, 5.985], zoom_start=14, tiles="CartoDB positron")
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        centroids = gdf.geometry.centroid
+    # Sample to keep the map fast (9 000 markers would freeze the browser)
+    sample = buildings.sample(min(2000, len(buildings)), random_state=42)
 
-    lat_c = float(centroids.y.mean())
-    lon_c = float(centroids.x.mean())
-
-    m = folium.Map(location=[lat_c, lon_c], zoom_start=14,
-                   tiles="CartoDB positron")
-
-    # ── Sample buildings to display (cap at 2000 for browser perf) ───────────
-    MAX_DOTS = 2000
-    has_brief = gdf["risk_brief"].notna() if "risk_brief" in gdf.columns else pd.Series(False, index=gdf.index)
-    priority = gdf[has_brief]
-    remainder = gdf[~has_brief]
-    n_rest = max(0, MAX_DOTS - len(priority))
-    display = pd.concat([
-        priority,
-        remainder.sample(min(n_rest, len(remainder)), random_state=42),
-    ])
-
-    # ── Draw circle markers ───────────────────────────────────────────────────
-    for idx, row in display.iterrows():
-        bid  = str(row["building_id"])
-        is_sel = bid == selected_id
-        color = "#f39c12" if is_sel else _zone_color(row.get("zone_code"))
-        zone  = row.get("zone_code") or "—"
-        area  = row.get("footprint_area_m2")
-        area_str = f"{area:.0f} m²" if pd.notna(area) else "—"
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            pt = centroids[idx]
+    for _, row in sample.iterrows():
+        bid       = str(row["building_id"])
+        is_sel    = bid == selected_id
+        pt        = row.geometry.centroid
+        zone      = row.get("zone_code") or "—"
+        area      = row.get("footprint_area_m2")
+        area_str  = f"{area:.0f} m²" if pd.notna(area) else "—"
 
         folium.CircleMarker(
             location=[pt.y, pt.x],
             radius=6 if is_sel else 4,
             fill=True,
-            fill_color=color,
-            color="#2c3e50" if is_sel else "#ffffff",
-            weight=2 if is_sel else 0.5,
-            fill_opacity=1.0 if is_sel else 0.75,
+            fill_color="#f39c12" if is_sel else zone_color(zone),
+            color="#2c3e50"      if is_sel else "#ffffff",
+            weight=2             if is_sel else 0.5,
+            fill_opacity=1.0     if is_sel else 0.75,
             tooltip=f"ID: {bid}<br>Zone: {zone}<br>Area: {area_str}",
         ).add_to(m)
 
-    # ── Selected building: full polygon ───────────────────────────────────────
-    if selected_id:
-        sel = gdf[gdf["building_id"].astype(str) == selected_id]
+    # Show the full footprint polygon for the selected building
+    if selected_id is not None:
+        sel = buildings[buildings["building_id"] == selected_id]
         if len(sel) > 0:
             folium.GeoJson(
-                sel[["building_id", "geometry"]].__geo_interface__,
+                sel[["geometry"]].__geo_interface__,
                 style_function=lambda _: {
                     "fillColor": "#f39c12",
-                    "color":     "#2c3e50",
-                    "weight":    3,
-                    "fillOpacity": 0.45,
+                    "color": "#2c3e50",
+                    "weight": 2,
+                    "fillOpacity": 0.3,
                 },
             ).add_to(m)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                pt = sel.geometry.centroid.iloc[0]
-            m.location = [pt.y, pt.x]
 
     return m
 
 
-# ── Main app ──────────────────────────────────────────────────────────────────
+def generate_brief(row: dict, regulations: list[dict]) -> str:
+    """
+    Ask the LLM to write a risk brief for this building.
 
-def main() -> None:
-    st.title("🏗️ SECO Building Intelligence")
-    st.markdown(
-        "**Pre-inspection risk briefs for Esch-sur-Alzette, Luxembourg** "
-        "| Data: BD-L-GeoBase (ACT 2026), national PAG, OpenStreetMap"
+    We send:
+      - The building's known facts (zone, area, etc.)
+      - All regulation excerpts from regulations.json
+        (only 10 short snippets → no need for vector search)
+
+    In a production system, we'd use a vector database (e.g. ChromaDB) to
+    retrieve only the most relevant regulations from a larger corpus.
+    """
+    facts = (
+        f"Building ID : {row['building_id']}\n"
+        f"PAG zone    : {row.get('zone_code') or 'unknown'}\n"
+        f"Zone label  : {row.get('zone_label') or '—'}\n"
+        f"Floor area  : {row.get('footprint_area_m2') or '?'} m²\n"
     )
 
-    # ── Sidebar ───────────────────────────────────────────────────────────────
-    with st.sidebar:
-        st.header("Building selector")
-        gdf = load_buildings()
+    reg_text = "\n\n".join(
+        f"[{r['label']}]\n{r['text']}"
+        for r in regulations
+    )
 
-        if gdf is None:
-            st.error(
-                "No building data found.\n\n"
-                "Run `make pipeline` first to download and process data."
-            )
-            st.stop()
+    user_message = (
+        f"BUILDING FACTS:\n{facts}\n\n"
+        f"REGULATION EXCERPTS:\n{reg_text}\n\n"
+        "Write the pre-inspection risk brief now."
+    )
 
-        st.caption(f"{len(gdf)} buildings loaded · {GOLD_FILE.exists() and 'Gold' or 'Silver'} layer")
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    response = client.chat.completions.create(
+        model=os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ],
+        max_tokens=500,
+        temperature=0.3,
+    )
+    return response.choices[0].message.content
 
-        # Search — driven by map clicks via session state (key binds widget ↔ state)
-        search = st.text_input(
-            "Search by building ID or PAG zone code",
-            key="search_input",
+
+# ── Streamlit UI ───────────────────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="SECO Building Intelligence",
+    page_icon="🏗️",
+    layout="wide",
+)
+
+st.title("🏗️ SECO Building Intelligence")
+st.caption(
+    "Pre-inspection risk briefs · Esch-sur-Alzette, Luxembourg · "
+    "Data: BD-L-GeoBase (ACT 2026) + national PAG"
+)
+
+# Load data (cached after first run)
+buildings   = load_buildings()
+regulations = load_regulations()
+
+# ── Sidebar ────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Select a building")
+
+    # The key="search_input" ties this widget to session state so that
+    # map clicks can update it (see the st.rerun() block below).
+    search = st.text_input("Search by ID or zone code", key="search_input")
+
+    if search:
+        mask = (
+            buildings["building_id"].str.contains(search, case=False, na=False)
+            | buildings["zone_code"].astype(str).str.contains(search, case=False, na=False)
         )
-        if search:
-            mask = (
-                gdf["building_id"].astype(str).str.contains(search, case=False, na=False)
-                | gdf.get("zone_code", pd.Series(dtype=str)).astype(str).str.contains(
-                    search, case=False, na=False
-                )
-            )
-            filtered = gdf[mask]
-        else:
-            filtered = gdf
+        options = buildings.loc[mask, "building_id"].tolist()
+    else:
+        options = buildings["building_id"].tolist()
 
-        # Select a building
-        bid_options = filtered["building_id"].astype(str).tolist()
-        if not bid_options:
-            st.warning("No buildings match the search.")
-            selected_bid = None
-        else:
-            selected_bid = st.selectbox(
-                f"Select building ({len(bid_options)} matched)",
-                bid_options,
-                format_func=lambda x: f"🏠 {x}",
-            )
-
-        st.divider()
-
-        st.divider()
-        st.markdown("**Map colour — PAG zone**")
-        st.markdown("🔵 Residential (HAB)")
-        st.markdown("🟣 Mixed / Town centre (MIX, CEN)")
-        st.markdown("🟠 Economic / Industrial (ECO, IND)")
-        st.markdown("🟢 Agricultural (AGR)")
-        st.markdown("🟡 Green space (VER)")
-        st.markdown("⚫ Other / no zone")
-
-        st.divider()
-        st.markdown(
-            "**About**\n\n"
-            "This is a pre-inspection triage tool, not a substitute for a physical "
-            "inspection. Energy certificates (CPE) and actual defect history are "
-            "private data — this product uses construction era, roof geometry, and "
-            "zoning as risk *proxies* only."
-        )
-
-    # ── Main panel ────────────────────────────────────────────────────────────
-    col_map, col_card = st.columns([3, 2])
-
-    with col_map:
-        st.subheader("Building map")
-        from streamlit_folium import st_folium
-        m = build_map(gdf, selected_bid)
-        map_data = st_folium(m, height=520, use_container_width=True)
-
-
-        # Map click → populate search bar via session state + rerun.
-        # The tooltip from folium is HTML so we extract the BLD_ ID with regex.
-        if map_data and map_data.get("last_object_clicked_tooltip"):
-            match = re.search(r"BLD_\d+",
-                              str(map_data["last_object_clicked_tooltip"]))
-            if match:
-                clicked_id = match.group(0)
-                if clicked_id != st.session_state.get("search_input", ""):
-                    st.session_state["search_input"] = clicked_id
-                    st.rerun()
-
-    with col_card:
-        if selected_bid:
-            row = gdf[gdf["building_id"].astype(str) == selected_bid]
-            if len(row) == 0:
-                st.warning(f"Building {selected_bid} not found.")
-            else:
-                _render_building_card(row.iloc[0].to_dict(), gdf)
-        else:
-            st.info("Select a building in the sidebar or click one on the map.")
-
-    # ── Stats footer ──────────────────────────────────────────────────────────
-    with st.expander("Dataset statistics"):
-        n_brief = gdf["risk_brief"].notna().sum() if "risk_brief" in gdf.columns else 0
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Buildings", len(gdf))
-        c2.metric("PAG zones matched",
-                  int(gdf["zone_code"].notna().sum()) if "zone_code" in gdf.columns else "—")
-        c3.metric("OSM era matched",
-                  int((gdf.get("osm_era", pd.Series()) != "unknown").sum()))
-        c4.metric("Risk briefs generated", n_brief)
-
-        if "osm_era" in gdf.columns:
-            era_counts = gdf["osm_era"].value_counts()
-            st.bar_chart(era_counts)
-
-
-def _render_building_card(row: dict, gdf: gpd.GeoDataFrame) -> None:
-    """Render the building fact card + risk brief in the right column."""
-    bid = row.get("building_id", "?")
-    st.subheader(f"Building {bid}")
-
-    # Fact card
-    col1, col2 = st.columns(2)
-    with col1:
-        area = row.get("footprint_area_m2")
-        st.metric("Footprint", f"{area:.0f} m²" if area else "—")
-        st.metric("PAG zone", _zone_badge(row.get("zone_code")))
-    with col2:
-        h_lim = row.get("height_limit_m")
-        st.metric("Height limit", f"{h_lim} m" if h_lim else "—")
-        st.metric("Era", _era_badge(row.get("osm_era")))
-
-    if row.get("osm_levels"):
-        st.caption(f"Storeys (OSM): {row['osm_levels']}")
-    if row.get("zone_label"):
-        st.caption(f"Zone label: {row['zone_label']}")
+    selected = (
+        st.selectbox(f"{len(options)} buildings", options, format_func=lambda x: f"🏠 {x}")
+        if options else None
+    )
 
     st.divider()
+    st.markdown("**Map colours — PAG zone**")
+    st.markdown("🔵 Residential (HAB)")
+    st.markdown("🟣 Mixed / Town centre (MIX, CEN)")
+    st.markdown("🟠 Economic / Industrial (ECO, IND)")
+    st.markdown("🟢 Agricultural (AGR)")
+    st.markdown("🟡 Green space (VER)")
+    st.markdown("⚫ Other / unknown")
 
-    # Risk brief
-    st.subheader("Pre-inspection Risk Brief")
-    brief = row.get("risk_brief")
-    if brief and not str(brief).startswith("["):
-        _format_risk_brief(brief)
+    st.divider()
+    st.caption(
+        "This tool is a prototype. It uses publicly available data only. "
+        "Private data (energy certificates, inspection history) is not included."
+    )
 
-        # Citations
-        citations_raw = row.get("citations", "[]")
-        try:
-            citations = json.loads(citations_raw) if isinstance(citations_raw, str) else []
-        except Exception:
-            citations = []
-        if citations:
-            with st.expander("Sources used"):
-                for c in citations:
-                    st.markdown(f"- [{c.get('label','?')}]({c.get('url','#')})")
+# ── Main area ──────────────────────────────────────────────────────────────────
+col_map, col_card = st.columns([3, 2])
+
+with col_map:
+    st.subheader("Map")
+    m        = build_map(buildings, selected)
+    map_data = st_folium(m, height=500, use_container_width=True)
+
+    # When the user clicks a building dot, extract its ID from the tooltip
+    # and write it into the search box (triggers a rerun → card updates).
+    tooltip = str(map_data.get("last_object_clicked_tooltip") or "")
+    match   = re.search(r"BLD_\d+", tooltip)
+    if match and match.group(0) != st.session_state.get("search_input", ""):
+        st.session_state["search_input"] = match.group(0)
+        st.rerun()
+
+with col_card:
+    if selected is None:
+        st.info("Click a dot on the map or search in the sidebar.")
     else:
-        st.info("No pre-generated brief. Generate one now:")
-        if st.button("Generate risk brief", key=f"gen_{bid}"):
-            with st.spinner("Generating risk brief... (~5 sec)"):
-                _generate_and_display(row, bid)
+        row = buildings[buildings["building_id"] == selected].iloc[0].to_dict()
 
+        st.subheader(f"Building {selected}")
 
-def _generate_and_display(row: dict, bid: str) -> None:
-    """Generate a brief on-demand and display it."""
-    try:
-        # pipeline dir is already on sys.path (set at module import time)
-        from _gold_helpers import (
-            generate_risk_brief,
-            retrieve_regulation_snippets,
-            get_llm_client,
-            _build_rag_query,
-        )
-        llm_client = get_llm_client()
+        col1, col2 = st.columns(2)
+        col1.metric("Floor area",  f"{row.get('footprint_area_m2') or 0:.0f} m²")
+        col2.metric("PAG zone",    row.get("zone_code") or "—")
+        if row.get("zone_label"):
+            st.caption(f"Zone: {row['zone_label']}")
 
-        embed_model, collection = load_retriever()
-        snippets = []
-        if embed_model and collection:
-            query = _build_rag_query(row)
-            snippets = retrieve_regulation_snippets(query, embed_model, collection)
+        st.divider()
+        st.subheader("Pre-inspection Risk Brief")
+        st.caption("Generated by Llama 3.1 (Groq) from building facts + regulation excerpts.")
 
-        brief, citations = generate_risk_brief(row, snippets, llm_client)
-        _format_risk_brief(brief)
+        if st.button("⚡ Generate brief", type="primary"):
+            with st.spinner("Generating…"):
+                brief = generate_brief(row, regulations)
+            st.write(brief)
 
-        if citations:
-            with st.expander("Sources used"):
-                for c in citations:
-                    st.markdown(f"- [{c.get('label','?')}]({c.get('url','#')})")
-    except EnvironmentError as exc:
-        st.error(str(exc))
-    except Exception as exc:
-        st.error(f"Generation failed: {exc}")
-
-
-if __name__ == "__main__":
-    main()
+# ── Footer stats ───────────────────────────────────────────────────────────────
+with st.expander("Dataset overview"):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Buildings (Esch-sur-Alzette)", len(buildings))
+    c2.metric("With PAG zone",  int(buildings["zone_code"].notna().sum()))
+    c3.metric("Data sources", 2)
+    st.caption("Pipeline: BD-L-GeoBase buildings → filter to Esch → spatial join with PAG zones → GeoJSON")

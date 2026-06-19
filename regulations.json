@@ -1,0 +1,72 @@
+[
+  {
+    "id": "rgd_2016_energie_1",
+    "label": "RGD 23 nov. 2016 — Performance énergétique des bâtiments (Art. 3–5)",
+    "url": "https://legilux.public.lu/eli/etat/leg/rgd/2016/11/23/a234/jo",
+    "domain": "energy",
+    "text": "Le règlement grand-ducal du 23 novembre 2016 fixe les exigences de performance énergétique pour les bâtiments neufs et les bâtiments existants faisant l'objet de travaux de rénovation importants. Art. 3: Tout bâtiment neuf doit atteindre au moins la classe énergétique B (indice ≤ 45 kWh/m²/an). Art. 4: Les bâtiments résidentiels construits avant 1990 dont la rénovation dépasse 25% de la surface d'enveloppe doivent satisfaire aux exigences minimales d'isolation thermique: coefficient U paroi ≤ 0,24 W/(m²K), toiture ≤ 0,17 W/(m²K), fenêtres ≤ 1,3 W/(m²K). Art. 5: L'attestation de performance énergétique (APE/Energiepass) est obligatoire lors de la vente ou de la location d'un bien immobilier. Elle doit être établie par un expert agréé."
+  },
+  {
+    "id": "rgd_2016_energie_2",
+    "label": "RGD 23 nov. 2016 — Rénovation énergétique des bâtiments anciens",
+    "url": "https://legilux.public.lu/eli/etat/leg/rgd/2016/11/23/a234/jo",
+    "domain": "energy",
+    "text": "Pour les bâtiments résidentiels existants construits avant 1970, les inspecteurs doivent contrôler: (1) L'isolation de la toiture ou du dernier plancher habitable: résistance thermique R ≥ 5,0 m²K/W. (2) L'isolation des murs extérieurs: R ≥ 2,5 m²K/W si rénovation. (3) Les ponts thermiques en façade, particulièrement aux jonctions plancher-mur. (4) L'étanchéité à l'air des châssis de fenêtres, surtout dans les bâtiments de la période 1945–1970 qui disposaient souvent de simple vitrage. Les bâtiments de la période 1970–1990 peuvent présenter des défauts d'isolation liés aux premières normes thermiques (après le choc pétrolier de 1973) mais insuffisamment performants selon les standards actuels."
+  },
+  {
+    "id": "rgd_incendie_1",
+    "label": "RGD 8 mars 2017 — Prévention incendie: dégagements et voies d'évacuation",
+    "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+    "domain": "fire_safety",
+    "text": "Les voies d'évacuation dans les bâtiments résidentiels collectifs (appartements) doivent respecter: (1) Largeur minimale des dégagements horizontaux: 0,90 m pour moins de 100 personnes, 1,40 m pour 100 à 500 personnes. (2) Distance maximale de parcours jusqu'à la sortie: 35 m dans les bâtiments sans sprinklers. (3) Escaliers: minimum 0,90 m de largeur libre, présence d'une main courante obligatoire des deux côtés si largeur > 1,20 m. (4) Portes coupe-feu: EI 30 minimum pour les portes de palier donnant accès aux cages d'escalier. (5) Résistance au feu des planchers et cloisons: REI 60 entre logements adjacents, REI 120 pour les éléments porteurs principaux dans les bâtiments de grande hauteur (> 28 m)."
+  },
+  {
+    "id": "rgd_incendie_2",
+    "label": "RGD 8 mars 2017 — Prévention incendie: bâtiments anciens et retrofit",
+    "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+    "domain": "fire_safety",
+    "text": "Pour les bâtiments construits avant 1950, les risques incendie spécifiques comprennent: (1) Planchers et charpentes en bois massif: risque d'effondrement rapide en cas d'incendie, durée de résistance souvent inférieure à REI 30. (2) Combles accessibles sans compartimentage: propagation rapide du feu. (3) Absence de système de détection automatique d'incendie (DAI) fréquente. (4) Conduits de cheminée en maçonnerie ancienne: risque de fissures et propagation de flammes entre étages. Pour les bâtiments de la période 1950–1980: (1) Utilisation possible d'amiante dans les faux-plafonds, les dalles vinyliques et les calorifugeages de tuyauteries. (2) Câblage électrique sans mise à la terre dans les bâtiments antérieurs à 1970. Tout changement d'affectation nécessite une mise en conformité incendie."
+  },
+  {
+    "id": "pag_general_hauteur",
+    "label": "PAG Luxembourg — Dispositions générales sur les hauteurs et gabarits",
+    "url": "https://data.public.lu/fr/datasets/pag-geometries-de-tous-les-pag-version-2011-en-vigueur/",
+    "domain": "zoning",
+    "text": "Les plans d'aménagement généraux (PAG) luxembourgeois définissent pour chaque zone urbanistique la hauteur maximale autorisée des constructions (hmax). Zones résidentielles HAB_1 (habitation faible densité): hmax généralement 7–10 m, R+1 à R+2. Zones HAB_2 (densité moyenne): hmax 10–14 m, jusqu'à R+3. Zones mixtes MIX_U (centre-ville): hmax 12–18 m. En cas de dépassement de la hauteur autorisée (hmax PAG), le bâtiment peut être en situation d'infraction urbanistique. L'inspecteur doit mesurer la hauteur hors-tout (du niveau du terrain naturel au point le plus haut) et la comparer à la valeur hmax du PAG applicable. La hauteur des toitures en pente est incluse si elle dépasse le dernier plancher de 0,80 m."
+  },
+  {
+    "id": "pag_zones_usages",
+    "label": "PAG Luxembourg — Zones d'usage et compatibilités d'affectation",
+    "url": "https://data.public.lu/fr/datasets/pag-geometries-de-tous-les-pag-version-2011-en-vigueur/",
+    "domain": "zoning",
+    "text": "Les zones PAG luxembourgeois et leurs affectations autorisées: HAB_1 (habitation unifamiliale): logements individuels, jardins, annexes. HAB_2 (habitation plurifamiliale): logements collectifs, commerces de proximité (RDC uniquement). MIX_U (zone mixte urbaine): logements, commerces, bureaux, hôtels. IND (zone industrielle): industrie, artisanat, entrepôts. ECO (zone d'activité économique): bureaux, services aux entreprises. Les bâtiments dont l'usage actuel ne correspond pas à la zone PAG (ex: activité commerciale en zone HAB_1) constituent une infraction. Lors d'une inspection préalable à une transaction immobilière, l'inspecteur doit vérifier la conformité de l'usage avec la zone PAG applicable. Tout changement d'affectation requiert une autorisation de construire."
+  },
+  {
+    "id": "amiante_pre1998",
+    "label": "Règlement grand-ducal sur l'amiante — Bâtiments construits avant 1998",
+    "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+    "domain": "structural_safety",
+    "text": "L'amiante a été interdit en Luxembourg à partir du 1er janvier 1998 (règlement grand-ducal du 30 juillet 1996). Tout bâtiment construit avant 1998 est susceptible de contenir des matériaux amiantés. Les matériaux les plus fréquemment concernés: (1) Ardoises de toiture en fibrociment (amiante-ciment). (2) Revêtements de sol en dalles vinyliques (surtout 1960–1980). (3) Calorifugeage de tuyauteries (chauffage, eau chaude). (4) Faux-plafonds en plaques de fibres. (5) Joints de dilitation. (6) Revêtements projetés (flocages) sur structures métalliques. Avant tout travaux de rénovation sur un bâtiment antérieur à 1998, un diagnostic amiante doit être réalisé par un organisme agréé. Le propriétaire est responsable de cette obligation. La présence d'amiante friable constitue un risque sanitaire immédiat."
+  },
+  {
+    "id": "securite_electrique",
+    "label": "Normes électriques — Mise aux normes bâtiments existants (RGIE/IEC 60364)",
+    "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+    "domain": "structural_safety",
+    "text": "En Luxembourg, les installations électriques doivent respecter le RGIE (Règlement Général sur les Installations Électriques) et les normes IEC 60364. Pour les bâtiments anciens: (1) Bâtiments antérieurs à 1970: installation électrique fréquemment sans prise de terre, câblage en aluminium ou en tissu, disjoncteurs différentiels absents. Risque d'incendie et d'électrocution élevé. (2) Bâtiments 1970–1990: câblage cuivre souvent présent mais protection différentielle 30 mA parfois absente dans les salles de bains. (3) Tout tableau électrique de plus de 30 ans doit être contrôlé par un organisme agréé (SECOLUX ou équivalent). (4) La certification électrique est obligatoire lors de la vente d'un bien immobilier. Un contrôle de conformité RGIE est à prévoir lors d'une inspection technique préalable à transaction."
+  },
+  {
+    "id": "permis_construire_lu",
+    "label": "Loi du 19 juillet 2004 — Autorisation de construire au Luxembourg",
+    "url": "https://guichet.public.lu/fr/entreprises/construction.html",
+    "domain": "building_permit",
+    "text": "En vertu de la loi modifiée du 19 juillet 2004 concernant l'aménagement communal et le développement urbain, tout projet de construction ou de transformation substantielle d'un bâtiment au Luxembourg est soumis à une autorisation de construire délivrée par la commune. L'autorisation de construire doit être respectée à la lettre: tout écart par rapport aux plans approuvés (surface de plancher, hauteur, emprise au sol, implantation) constitue une infraction urbanistique. Lors d'une inspection préalable à une due-diligence, les points à vérifier incluent: (1) Conformité des niveaux bâtis avec les autorisations. (2) Extensions ou modifications réalisées sans permis. (3) Affectations non autorisées (ex: conversion sous-sol en logement). (4) Respect des distances aux limites de propriété (fond et côtés) telles que définies dans le PAG communal."
+  },
+  {
+    "id": "etancheite_toiture_plate",
+    "label": "DTU 43 / NF P 84 — Étanchéité des toitures-terrasses",
+    "url": "https://itm.public.lu/fr/securite-sante-travail/construction.html",
+    "domain": "structural_safety",
+    "text": "Les toitures plates ou à faible pente (< 5%) sont particulièrement exposées aux problèmes d'étanchéité et constituent un point d'attention majeur lors d'inspections. Signaux d'alerte: (1) Fissures ou bulles dans l'étanchéité bitumineuse. (2) Relevés d'étanchéité insuffisants aux acrotères (minimum 15 cm au-dessus du revêtement). (3) Évacuations pluviales obstruées (risque de surcharge structurale lors d'épisodes pluvieux). (4) Végétation en toiture (toitures vertes non entretenues). Les bâtiments des années 1960–1990 disposaient souvent de toitures plates avec monocouche bitumineux dont la durée de vie est de 20–30 ans: un bâtiment de cette époque avec toiture plate originale doit faire l'objet d'un contrôle minutieux d'étanchéité. La moindre infiltration peut engendrer des dégradations importantes sur la structure (pourrissement des aciers, dégradation du béton)."
+  }
+]
