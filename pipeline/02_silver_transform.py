@@ -178,52 +178,65 @@ def load_buildings(esch_boundary: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 # ── 4. PAG zones filtered + reprojected ─────────────────────────────────────
 
+PAG_ZONE_HEIGHT_MAP: dict[str, float] = {
+    # Typical PAG height limits by zone category (metres, approximate)
+    "HAB_1": 8.0,   "HAB_2": 12.0,  "HAB_3": 16.0,
+    "MIX_u": 15.0,  "MIX_c": 10.0,
+    "COM": 12.0,    "GARE": 20.0,
+    "ECO_c1": 10.0, "ECO_c2": 10.0, "ECO_n": 10.0, "ECO_r": 12.0,
+    "IND": 12.0,
+    "SPEC": None,   "AGR": None,    "FOR": None,
+    "JAR": 5.0,     "VERD": None,   "PARC": None,
+    "REC": 8.0,     "BEP": None,
+}
+
+PAG_ZONE_LABEL_MAP: dict[str, str] = {
+    "HAB_1": "Habitation (faible densité)",
+    "HAB_2": "Habitation (densité moyenne)",
+    "HAB_3": "Habitation (forte densité)",
+    "MIX_u": "Zone mixte urbaine",
+    "MIX_c": "Zone mixte commerciale",
+    "COM": "Zone commerciale",
+    "ECO_c1": "Zone d'activité économique (c1)",
+    "ECO_c2": "Zone d'activité économique (c2)",
+    "ECO_n": "Zone d'activité économique (nouvelles)",
+    "ECO_r": "Zone d'activité économique (reconversion)",
+    "IND": "Zone industrielle",
+    "AGR": "Zone agricole",
+    "FOR": "Zone forestière",
+    "JAR": "Zone de jardins",
+    "VERD": "Zone verte / espaces verts",
+    "PARC": "Zone de parcs",
+    "REC": "Zone de récréation",
+    "SPEC": "Zone spéciale",
+    "BEP": "Bande d'espaces protégés",
+    "GARE": "Zone de gare / pôle d'échange",
+}
+
+
 def load_pag(esch_boundary: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     print("[silver] Loading national PAG → filtering to Esch-sur-Alzette")
     pag_dir = SILVER / "_pag_raw"
     _unzip_to(BRONZE / "pag_national.gpkg.zip", pag_dir)
     gpkg = _find_gpkg(pag_dir)
 
-    import fiona
-    layers = fiona.listlayers(str(gpkg))
-    print(f"         Layers in PAG gpkg: {layers[:10]} ...")
+    # PAG_PAG_ZONAGE is the urbanistic zone polygons layer
+    gdf_pag = gpd.read_file(str(gpkg), layer="PAG_PAG_ZONAGE")
+    print(f"         PAG_PAG_ZONAGE: {len(gdf_pag)} features, CRS: {gdf_pag.crs}")
 
-    # The national PAG GeoPackage typically has a zones layer
-    zone_layer = None
-    for candidate in ("zones", "zone", "pag_zones", "PAG_zones",
-                      "pag_zone", "zone_urbanistique", "zoning"):
-        if candidate in layers:
-            zone_layer = candidate
-            break
-    if zone_layer is None:
-        zone_layer = layers[0]
-        print(f"         [warn] guessing PAG layer: {zone_layer}")
+    # Filter to Esch commune code C059 (INS 059)
+    esch_mask = gdf_pag["CODE_COM"] == "C059"
+    gdf_esch = gdf_pag[esch_mask].copy()
+    print(f"         Esch-sur-Alzette (C059) zones: {len(gdf_esch)}")
+    print(f"         Zone categories: {sorted(gdf_esch['CATEGORIE'].unique())}")
 
-    # PAG data is often in WGS84 already, but may be EPSG:2169
-    gdf_pag = gpd.read_file(str(gpkg), layer=zone_layer)
-    print(f"         PAG CRS: {gdf_pag.crs} | total features: {len(gdf_pag)}")
-    print(f"         PAG columns: {list(gdf_pag.columns)}")
+    # Rename CATEGORIE → zone_code, derive label and height limit
+    gdf_esch = gdf_esch.rename(columns={"CATEGORIE": "zone_code"})
+    gdf_esch["zone_label"]    = gdf_esch["zone_code"].map(PAG_ZONE_LABEL_MAP)
+    gdf_esch["height_limit_m"] = gdf_esch["zone_code"].map(PAG_ZONE_HEIGHT_MAP)
 
-    # Ensure same CRS for spatial operations
-    if gdf_pag.crs and str(gdf_pag.crs) != EPSG_TARGET:
-        gdf_pag = gdf_pag.to_crs(EPSG_TARGET)
-
-    boundary_wgs84 = esch_boundary.to_crs(EPSG_TARGET)
-    bbox = tuple(boundary_wgs84.total_bounds)
-    gdf_esch = gdf_pag.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]]
-    print(f"         PAG features in Esch bbox: {len(gdf_esch)}")
-
-    if len(gdf_esch) == 0:
-        print("         [warn] No PAG features in bbox — trying commune filter by name")
-        # Filter by commune name column if bbox misses
-        for col in gdf_pag.columns:
-            if "commune" in col.lower() or "nom" in col.lower():
-                mask = gdf_pag[col].astype(str).str.contains("Esch", case=False, na=False)
-                gdf_esch = gdf_pag[mask]
-                if len(gdf_esch) > 0:
-                    print(f"         Found {len(gdf_esch)} via column '{col}'")
-                    break
-
+    # Reproject to WGS84
+    gdf_esch = gdf_esch.to_crs(EPSG_TARGET)
     gdf_esch = gdf_esch.reset_index(drop=True)
     return gdf_esch
 
@@ -232,7 +245,7 @@ def load_pag(esch_boundary: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def join_pag(buildings: gpd.GeoDataFrame,
              pag: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    print("[silver] Spatial join: buildings ← PAG zones (largest overlap)")
+    print("[silver] Spatial join: buildings ← PAG zones (centroid-in-polygon)")
     if len(pag) == 0:
         print("         [warn] PAG empty — skipping join, filling nulls")
         buildings["zone_code"]  = None
@@ -240,39 +253,25 @@ def join_pag(buildings: gpd.GeoDataFrame,
         buildings["height_limit_m"] = None
         return buildings
 
-    # Normalise column names using config constants (with fallbacks)
-    rename_map = {}
-    for target, candidates in [
-        ("zone_code",   [PAG_CODE_FIELD,  "cod_zone", "code_zone", "zone_code", "type"]),
-        ("zone_label",  [PAG_ZONE_FIELD,  "lib_zone",  "label",     "libelle"]),
-        ("height_limit_m", [PAG_HEIGHT_FIELD, "hmax", "h_max", "hauteur_max", "height_max"]),
-    ]:
-        for c in candidates:
-            if c in pag.columns and c != target:
-                rename_map[c] = target
-                break
+    pag_clean = pag[["geometry", "zone_code", "zone_label", "height_limit_m"]].copy()
 
-    pag = pag.rename(columns=rename_map)
-    keep_pag = ["geometry"]
-    for col in ("zone_code", "zone_label", "height_limit_m"):
-        if col in pag.columns:
-            keep_pag.append(col)
-
-    pag_clean = pag[keep_pag].copy()
-
-    # Centroid join for speed (good enough for ~100 m² footprints)
+    # Compute centroids in projected CRS for accuracy, then reproject for join
+    centroids_proj = buildings.to_crs(EPSG_SOURCE).geometry.centroid
     bld_centroids = buildings.copy()
-    bld_centroids.geometry = buildings.geometry.centroid
-    joined = gpd.sjoin(bld_centroids, pag_clean, how="left",
-                       predicate="within")
+    bld_centroids.geometry = centroids_proj.to_crs(EPSG_TARGET)
+
+    joined = gpd.sjoin(bld_centroids, pag_clean, how="left", predicate="within")
     joined = joined.drop(columns=["index_right"], errors="ignore")
+
+    # Dedup: each building centroid should hit at most one zone; keep first match
+    joined = joined[~joined.index.duplicated(keep="first")]
+
+    # Restore original polygon geometries
+    joined = joined.reindex(buildings.index)
     joined.geometry = buildings.geometry.values
 
     for col in ("zone_code", "zone_label", "height_limit_m"):
-        if col in joined.columns:
-            buildings[col] = joined[col].values
-        else:
-            buildings[col] = None
+        buildings[col] = joined[col].values if col in joined.columns else None
 
     matched = buildings["zone_code"].notna().sum()
     print(f"         Matched {matched}/{len(buildings)} buildings to a PAG zone")
@@ -367,14 +366,20 @@ def join_osm(buildings: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     osm_gdf = gpd.GeoDataFrame(osm_rows, crs=EPSG_TARGET)
     print(f"         OSM buildings reconstructed: {len(osm_gdf)}")
 
-    # Centroid join ACT buildings → nearest OSM polygon
+    # Centroid join ACT buildings → OSM polygons
+    centroids_wgs = buildings.geometry.to_crs(EPSG_TARGET) if buildings.crs.to_epsg() != 4326 \
+        else buildings.geometry
     bld_centroids = buildings.copy()
     bld_centroids.geometry = buildings.geometry.centroid
-    joined = gpd.sjoin(bld_centroids, osm_gdf[["geometry", "osm_era",
-                                                "osm_levels", "osm_building_type",
-                                                "osm_year"]],
+
+    osm_cols = ["geometry", "osm_era", "osm_levels", "osm_building_type", "osm_year"]
+    joined = gpd.sjoin(bld_centroids, osm_gdf[osm_cols],
                        how="left", predicate="within")
     joined = joined.drop(columns=["index_right"], errors="ignore")
+
+    # Dedup: keep first OSM match per building
+    joined = joined[~joined.index.duplicated(keep="first")]
+    joined = joined.reindex(buildings.index)
     joined.geometry = buildings.geometry.values
 
     for col in ("osm_era", "osm_levels", "osm_building_type", "osm_year"):

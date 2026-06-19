@@ -11,7 +11,6 @@ import os
 import sys
 from pathlib import Path
 
-import anthropic
 import geopandas as gpd
 import pandas as pd
 import streamlit as st
@@ -63,36 +62,6 @@ def load_retriever():
         return model, collection
     except Exception:
         return None, None
-
-
-# ── On-demand brief generation ────────────────────────────────────────────────
-
-def generate_brief_on_demand(row: dict) -> tuple[str, list[dict]]:
-    """Call the gold-generation helpers directly for one building."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
-    from _gold_helpers import (
-        generate_risk_brief,
-        retrieve_regulation_snippets,
-        _build_rag_query,
-    )
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return "⚠️  ANTHROPIC_API_KEY not set in .env", []
-
-    model_name = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-    embed_model, collection = load_retriever()
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        snippets = []
-        if embed_model and collection:
-            query = _build_rag_query(row)
-            snippets = retrieve_regulation_snippets(query, embed_model, collection)
-        brief, citations = generate_risk_brief(row, snippets, client, model_name)
-        return brief, citations
-    except Exception as exc:
-        return f"⚠️  Error generating brief: {exc}", []
 
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
@@ -379,12 +348,8 @@ def _render_building_card(row: dict, gdf: gpd.GeoDataFrame) -> None:
     else:
         st.info("No pre-generated brief. Generate one now:")
         if st.button("Generate risk brief", key=f"gen_{bid}"):
-            with st.spinner("Calling Claude... (~5 sec)"):
-                api_key = os.environ.get("ANTHROPIC_API_KEY")
-                if not api_key:
-                    st.error("ANTHROPIC_API_KEY not set in .env file.")
-                else:
-                    _generate_and_display(row, bid)
+            with st.spinner("Generating risk brief... (~5 sec)"):
+                _generate_and_display(row, bid)
 
 
 def _generate_and_display(row: dict, bid: str) -> None:
@@ -394,11 +359,10 @@ def _generate_and_display(row: dict, bid: str) -> None:
         from _gold_helpers import (
             generate_risk_brief,
             retrieve_regulation_snippets,
+            get_llm_client,
             _build_rag_query,
         )
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        model_name = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-        client = anthropic.Anthropic(api_key=api_key)
+        llm_client = get_llm_client()
 
         embed_model, collection = load_retriever()
         snippets = []
@@ -406,13 +370,15 @@ def _generate_and_display(row: dict, bid: str) -> None:
             query = _build_rag_query(row)
             snippets = retrieve_regulation_snippets(query, embed_model, collection)
 
-        brief, citations = generate_risk_brief(row, snippets, client, model_name)
+        brief, citations = generate_risk_brief(row, snippets, llm_client)
         _format_risk_brief(brief)
 
         if citations:
             with st.expander("Sources used"):
                 for c in citations:
                     st.markdown(f"- [{c.get('label','?')}]({c.get('url','#')})")
+    except EnvironmentError as exc:
+        st.error(str(exc))
     except Exception as exc:
         st.error(f"Generation failed: {exc}")
 

@@ -13,13 +13,11 @@ generation is also available from the app.
 
 import argparse
 import json
-import os
 import time
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-import anthropic
 from dotenv import load_dotenv
 
 from config import SILVER, GOLD
@@ -27,6 +25,7 @@ from _gold_helpers import (
     load_retriever,
     retrieve_regulation_snippets,
     generate_risk_brief,
+    get_llm_client,
     _build_rag_query,
 )
 
@@ -66,21 +65,14 @@ def main(sample: int | None = 200, delay: float = 0.3) -> None:
         print("[gold] Nothing to do — all buildings already have briefs.")
         return
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY not set. Copy .env.example → .env and add your key."
-        )
-
-    model_name = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-    print(f"[gold] Claude model: {model_name}")
+    llm_client = get_llm_client()
+    print(f"[gold] LLM provider: {type(llm_client).__name__}")
 
     embed_model, collection = load_retriever()
     n_docs = collection.count() if collection else 0
     if n_docs == 0:
         print("[gold] [warn] ChromaDB empty — briefs will have no regulation context")
 
-    claude_client = anthropic.Anthropic(api_key=api_key)
     new_rows = []
 
     for i, (_, row) in enumerate(todo.iterrows(), 1):
@@ -94,22 +86,14 @@ def main(sample: int | None = 200, delay: float = 0.3) -> None:
                                             embed_model, collection)
                 if n_docs > 0 else []
             )
-            brief, citations = generate_risk_brief(row_dict, snippets,
-                                                    claude_client, model_name)
-            row_dict["risk_brief"]  = brief
-            row_dict["citations"]   = json.dumps(citations, ensure_ascii=False)
-            row_dict["brief_model"] = model_name
+            brief, citations = generate_risk_brief(row_dict, snippets, llm_client)
+            row_dict["risk_brief"] = brief
+            row_dict["citations"]  = json.dumps(citations, ensure_ascii=False)
             print("✓")
-        except anthropic.APIError as exc:
-            print(f"API error: {exc}")
-            row_dict["risk_brief"]  = f"[Error: {exc}]"
-            row_dict["citations"]   = "[]"
-            row_dict["brief_model"] = model_name
         except Exception as exc:
             print(f"Error: {exc}")
-            row_dict["risk_brief"]  = "[Generation failed]"
-            row_dict["citations"]   = "[]"
-            row_dict["brief_model"] = model_name
+            row_dict["risk_brief"] = f"[Generation failed: {exc}]"
+            row_dict["citations"]  = "[]"
 
         new_rows.append(row_dict)
 
