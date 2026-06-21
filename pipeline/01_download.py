@@ -1,16 +1,9 @@
-"""
-Step 1 — download raw data from data.public.lu (Luxembourg open data).
-
-Run once. Already-downloaded files are skipped automatically.
-"""
-
 import requests
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 DATA.mkdir(exist_ok=True)
 
-# Two public datasets, both from data.public.lu
 SOURCES = [
     {
         "name": "BD-L-GeoBase buildings (ACT, April 2026)",
@@ -27,7 +20,7 @@ SOURCES = [
 for src in SOURCES:
     dest = src["dest"]
     if dest.exists():
-        print(f"  skip  {src['name']} (already downloaded)")
+        print(f"  skip  {src['name']}")
         continue
 
     print(f"  downloading  {src['name']} ...")

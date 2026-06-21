@@ -1,16 +1,7 @@
-# Core data pipeline
 geopandas==0.14.4
 requests==2.32.3
 python-dotenv==1.0.1
-
-# AI brief generation
 groq>=0.13.0
-
-# Streamlit app + interactive map
 streamlit==1.40.2
 folium==0.18.0
 streamlit-folium==0.23.1
-
-# Note: for a production system we'd add chromadb + sentence-transformers
-# to do semantic search over a larger regulation corpus instead of including
-# all 10 snippets in every prompt.
